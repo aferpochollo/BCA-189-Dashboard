@@ -38,45 +38,73 @@
 
   <div class="data-cards">
     <?php
-      $temp = $_GET['temp'] ?? 'N/A';
-      $hum = $_GET['hum'] ?? 'N/A';
-      $ec = $_GET['ec'] ?? 'N/A';
-      $moisture = $_GET['moisture'] ?? 'N/A';
-      $ph = $_GET['ph'] ?? 'N/A';
-      $n = $_GET['n'] ?? 'N/A';
-      $p = $_GET['p'] ?? 'N/A';
-      $k = $_GET['k'] ?? 'N/A';
-
-      function getSoilType($moisture, $ph, $n, $p, $k) {
-        if ($moisture === 'N/A' || $ph === 'N/A' || $n === 'N/A' || $p === 'N/A' || $k === 'N/A') {
-          return ['Unknown', 'Insufficient data to determine soil type.'];
-        }
-
-        if ($ph >= 6 && $ph <= 7.5 && $moisture >= 30 && $moisture <= 50 && $n >= 20 && $p >= 15 && $k >= 15) {
-          return ['Loam', 'Loam soil is ideal for most crops with good water retention and drainage.'];
-        } elseif ($moisture < 20 && $ph < 6) {
-          return ['Sandy', 'Sandy soil drains quickly and is low in nutrients. Suitable for drought-resistant plants.'];
-        } elseif ($moisture > 60 && $ph < 6.5) {
-          return ['Clay', 'Clay soil holds water well but may have drainage issues. Best for rice and wet crops.'];
-        } else {
-          return ['Unknown', 'The soil properties do not match a known classification. Consider further testing.'];
-        }
+      // Database connection
+      $conn = new mysqli("localhost", "root", "", "spi");
+      if ($conn->connect_error) {
+          die("Connection failed: " . $conn->connect_error);
       }
 
-      $moistureVal = is_numeric($moisture) ? floatval($moisture) : 'N/A';
-      $phVal = is_numeric($ph) ? floatval($ph) : 'N/A';
-      $nVal = is_numeric($n) ? floatval($n) : 'N/A';
-      $pVal = is_numeric($p) ? floatval($p) : 'N/A';
-      $kVal = is_numeric($k) ? floatval($k) : 'N/A';
+      // Fetch most recent data
+      $sql = "SELECT * FROM sensordata ORDER BY timestamp DESC LIMIT 1";
+      $result = $conn->query($sql);
+      if ($result->num_rows > 0) {
+          $row = $result->fetch_assoc();
+          $temp = $row['temperature'];
+          $hum = $row['humidity'];
+          $ec = $row['ec'];
+          $ph = $row['ph'];
+          $n = $row['nitrogen'];
+          $p = $row['phosphorus'];
+          $k = $row['potassium'];
+          $moisture = $row['moisture'];
+      } else {
+          $temp = $hum = $ec = $ph = $n = $p = $k = $moisture = 'N/A';
+      }
+      $conn->close();
 
-      list($soilType, $description) = getSoilType($moistureVal, $phVal, $nVal, $pVal, $kVal);
-      $descClass = ($soilType === 'Unknown') ? 'unknown-desc' : 'known-desc';
+      // Helper function to determine soil type based on ESP32 logic
+      function identifySoilType($ec, $ph, $n, $p, $k) {
+        $zeroCount = 0;
+        if ($ec == 0) $zeroCount++;
+        if ($ph == 0) $zeroCount++;
+        if ($n == 0) $zeroCount++;
+        if ($p == 0) $zeroCount++;
+        if ($k == 0) $zeroCount++;
 
+        if ($zeroCount > 3) return "Insufficient data to determine soil";
+
+        if ($ec < 500 && $ph >= 6.0 && $ph <= 6.8 && $n < 20 && $p < 15 && $k < 15)
+          return "Sandy Soil";
+        elseif ($ec >= 800 && $ec <= 1500 && $ph >= 6.2 && $ph <= 7.0 && $n >= 20 && $p >= 20 && $k >= 20)
+          return "Loamy Soil";
+        elseif ($ec > 1500 && $ph >= 6.5 && $ph <= 7.5 && $k >= 30)
+          return "Clay Soil";
+        elseif ($ec < 700 && $ph >= 6.0 && $ph <= 7.0 && $n > 25 && $p > 25)
+          return "Silty Soil";
+        elseif ($ph < 6.0 && $n > 30 && $ec < 1000)
+          return "Peaty Soil";
+        elseif ($ec > 2000 && $ph > 7.5)
+          return "Saline Soil";
+        else
+          return "Unknown Soil";
+      }
+
+      $ecVal = is_numeric($ec) ? floatval($ec) : 0;
+      $phVal = is_numeric($ph) ? floatval($ph) : 0;
+      $nVal = is_numeric($n) ? floatval($n) : 0;
+      $pVal = is_numeric($p) ? floatval($p) : 0;
+      $kVal = is_numeric($k) ? floatval($k) : 0;
+
+      $soilType = identifySoilType($ecVal, $phVal, $nVal, $pVal, $kVal);
+      $descClass = ($soilType === "Unknown Soil" || $soilType === "Insufficient data to determine soil") ? 'unknown-desc' : 'known-desc';
+
+      // Output soil type
       echo "<div class='card wide-card'>
               <h3>Soil Type: {$soilType}</h3>
-              <p class='{$descClass}'>{$description}</p>
+              <p class='{$descClass}'>This is an automated classification based on sensor values.</p>
             </div>";
 
+      // Output other sensor data
       echo "<div class='card medium-card data-card'>
               <div class='card-content'>
                 <div>
@@ -107,25 +135,25 @@
               </div>
             </div>";
 
-     echo "<div class='card small-card data-card'>
-            <div class='card-content'>
-              <div>
-                <h4>pH</h4>
-                <p>{$ph}</p>
+      echo "<div class='card small-card data-card'>
+              <div class='card-content'>
+                <div>
+                  <h4>pH</h4>
+                  <p>{$ph}</p>
+                </div>
+                <img src='ph-balance.png' alt='pH' class='card-img' />
               </div>
-              <img src='ph-balance.png' alt='pH' class='card-img' />
-            </div>
-          </div>";            
+            </div>";
 
-    echo "<div class='card medium-card data-card'>
-            <div class='card-content'>
-              <div>
-                <h4>Electrical Conductivity</h4>
-                <p>{$ec}</p>
+      echo "<div class='card medium-card data-card'>
+              <div class='card-content'>
+                <div>
+                  <h4>Electrical Conductivity</h4>
+                  <p>{$ec}</p>
+                </div>
+                <img src='flash.png' alt='EC' class='card-img' />
               </div>
-              <img src='flash.png' alt='EC' class='card-img' />
-            </div>
-          </div>";
+            </div>";
 
       echo "<div class='npk-group'>
               <div class='card npk-card data-card'>
